@@ -4,7 +4,6 @@ Created on Oct 6, 2019
 @author: mvelasco
 '''
 import numpy as np
-import pdb
 import time
 
 
