@@ -1,5 +1,5 @@
 '''
-Created on Oct 6, 2019
+Created on May 14, 2021
 
 @author: mvelasco
 '''
@@ -219,6 +219,7 @@ if __name__ == "__main__":
     #We construct the optimal transport object which carries out the gradient descent
     OT = Optimal_Transport_Finder(empirical_measure,probability_measure,dist,num_MC=100000)
     OT.do_gradient_descent(NumSteps=30, StepSize=0.5, keep_track_of_best=True, Descending_in_size=True)    
-    WVD = OT.WVD #This is the resulting weighted Voronoi Diagram, which encodes the optimal transport
-    
+    WVD = OT.WVD #This is the resulting Weighted Voronoi Diagram, which encodes the optimal transport
+    print(WVD.centers)
+    print(WVD.weights)
     
