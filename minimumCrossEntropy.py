@@ -10,6 +10,18 @@ import pdb
 
 
 class polytope:
+    """
+    This class is a description of a polytope via inequalities. 
+    It can compute the Chebyshev center of any such polytope
+    
+
+    The inequalities take the form
+    Ineq_Vector \dot variables <= RHS
+    and Eq_vectors \dot variables == RHS 
+
+    The Chebyshev center inequalities require the dual norm of the constraints so the polytope requires a dualnorm_fn.
+    
+    """
     def __init__(self, dualnorm_fn):
         self.numIneqs = 0
         self.model = Model("Chebyshev_Center")
@@ -24,6 +36,9 @@ class polytope:
         self.XVars = []
         
     def initialize_cube(self, dim, diamK):
+        """Creates a cube in R^dim dimensions, 
+        with center (0,0) and infinity norm at most diamK
+        which we can use as initial setup """
         self.dim = dim
         for k in range(dim):
             vector = np.zeros(dim)
@@ -41,16 +56,22 @@ class polytope:
 
         
     def initialize_chebyshev_model(self):
-        #Primero se construyen las variables, una por cada dimension y una adicional por el radio.
-        #En el proceso especificamos la funcion objetivo
+        """This function specifies the optimization problem to be run for finding Chebyshev centers
+        
+        """
+        #One variable per dimension 
         names = ["X_"+str(k) for k in range(self.dim)]
         for name in names:
-            self.gurobiVars.append(self.model.addVar(name=name,vtype=GRB.CONTINUOUS))
-        #add nonnegative variable r:
-        rvar = self.model.addVar(name="r",vtype=GRB.CONTINUOUS)
+            self.gurobiVars.append(self.model.addVar(name=name,vtype=GRB.CONTINUOUS, lb = (-1)*float("inf"), ub = float("inf")))
+        
+        #additional nonnegative variable r, for the radius of the ball
+        
+        rvar = self.model.addVar(name="r",vtype=GRB.CONTINUOUS) #Gurobi DEFAULT behavior is making continuous variables automatically nonnegative
         self.gurobiVars.append(rvar)
         self.gurobiR = rvar
-        #Luego se describen las restricciones que tenemos
+        #r will be the last variable
+
+        #We construct the inequalities of the Tchebyshev center problem
         newIneq_vectors = []
         for vector in self.Ineq_vectors:
             newVector = np.zeros(len(vector)+1)
@@ -62,7 +83,7 @@ class polytope:
                     newVector[k] = self.dualnorm_fn(vector)
             newIneq_vectors.append(newVector)
 
-        #We add the inequalities            
+        #Next we add the inequalities to the Model:            
         for k in range(len(self.Ineq_vectors)):
             coeff_vector = newIneq_vectors[k]            
             try: 
@@ -294,15 +315,26 @@ if __name__ == "__main__":
 
     WRITE=False
     P = polytope(norm)
-    N = 5
-    diamK=11.0
+    N = 2
+    diamK=1.0
     P.initialize_cube(N,diamK)
     P.initialize_chebyshev_model()
     P.compute_chebyshev_center()
-    print(P.current_Chebyshev_Center)
-    print(P.dim)
-    print(P.numIneqs)
+    print("_______________________________________________")
+    print("Center: " + str(P.current_Chebyshev_Center))
+    print("Radius: " + str(P.current_r))
+    print("Dimension: "+str(P.dim))
+    print("Num_Ineqs: "+ str(P.numIneqs))
+    print("_______________________________________________")
+
     print("done")
+    P.new_linear_Ineq([1,1], 0)
+    P.compute_chebyshev_center()
+    print("\n")
+    print(P.current_Chebyshev_Center)
+    print("done")
+
+    pdb.set_trace()
     Q=polytope(norm)
     #empirical_data_points_vector = [np.random.uniform(-1,1,2) for k in range(4)]
     empirical_data_points_vector = [[1,0], [0,0], [0,1]]

@@ -6,6 +6,8 @@ Created on May 14, 2021
 import numpy as np
 import pdb
 import time
+import numpy as np
+import matplotlib.pyplot as plt
 
 
 class Empirical_Measure:
@@ -44,17 +46,19 @@ class Empirical_Measure:
 class Probability_Measure:
     """
     We represent probability measures via black box routine that produces independent samples from 
-    this distribution.
+    this distribution and an analytic formula for its density wrt Lebesgue.
     
     
     A probability measure is capable of:
         -Producing an independent sample of the random variable.
         -Acting on functions by integration (integrate via MonteCarlo)
+        -evaluate the corresponding probability density function
     
     """
     
-    def __init__(self, sample_q_fn):
+    def __init__(self, sample_q_fn, density_fn):
         self.sample_q_fn = sample_q_fn
+        self.density_fn = density_fn
         
     def sample_q(self, numsamples):
         return self.sample_q_fn(numsamples)
@@ -62,6 +66,9 @@ class Probability_Measure:
     def integrate(self, fn):
         points = self.sample_q(self.MC_points)
         return np.average([fn(p) for p in points])
+    
+    def evaluate_density_fn(self,vector):
+        return(self.density_fn(vector))
 
 
 class Weighted_Voronoi_Diagram:
@@ -73,6 +80,8 @@ class Weighted_Voronoi_Diagram:
     It should be capable of:
     (1) Given a new vector find the index of the weighted nearest center+
     (2) Given a collection of vectors count the fraction of these points in each of the weighted voronoi cells.+
+    (3) Given a collection of vectors and a (u,v) distortion, count the fraction of these points 
+    in each of the weighted voronoi cells.+
     """
     
     def __init__(self, centers_array, weights_vector, distance_fn):
@@ -103,11 +112,18 @@ class Weighted_Voronoi_Diagram:
             weighted_distances = np.array([self.distance(vector, self.centers[k])-self.weights[k] for k in range(N)])
             return(np.min(weighted_distances))
 
+
     def compute_array_minimal_weighted_distances(self, vectors_array):
         distances_vector = np.zeros(len(vectors_array))
         for k, vector in enumerate(vectors_array):
             distances_vector[k] = self.minimal_weighted_distance_to_data_point(vector)
         return(distances_vector)
+
+    def compute_array_index_weighted_cell_of(self,vectors_array):
+        indices_vector = np.zeros(len(vectors_array))
+        for k, vector in enumerate(vectors_array):
+            indices_vector[k] = self.index_weighted_cell_of(vector)
+        return(indices_vector)
 
     def compute_proportions_in_cells(self, vectors_array, gradient=False):
         #Given a collection of vectors count the fraction of these points in each of the weighted voronoi cells
@@ -121,6 +137,55 @@ class Weighted_Voronoi_Diagram:
             return region_counts_vector/len(vectors_array)
 
 
+    #The distorted weights below are needed for computing Theorem 1.3 b
+    def uv_distorted_weight(self,vector, UVvector):
+            N = self.ncenters
+            weighted_distances = np.array([self.distance(vector, self.centers[k])-self.weights[k] for k in range(N)])
+            phi_lambda = np.min(weighted_distances)
+            u=UVvector[0]
+            v=UVvector[1]
+            return(np.exp(-1-v*phi_lambda-u))
+
+    def compute_array_uv_distorted_weights(self, vectors_array, UVvector):
+        distorsions_vector = np.zeros(len(vectors_array))
+        for k, vector in enumerate(vectors_array):
+            distorsions_vector[k] = self.uv_distorted_weight(vector, UVvector)
+        return(distorsions_vector)
+
+    def compute_gradient_from_distorted_averages_in_cells(self, vectors_array, UVvector):
+        """Given a collection of vectors and a u,v pair compute the average of the uv-distorted distribution in each weighted Voronoi cell"""        
+        N_samples=len(vectors_array)
+        distortions_vector = self.compute_array_uv_distorted_weights(vectors_array, UVvector)#computes the value of exp(-1-v\phi(z)-u) for z in sample
+        indices_vector = self.compute_array_index_weighted_cell_of(vectors_array)# Finds the nearest center to each sample point        
+        #Next we go compute the average of the values in each region. Results are stored in region_values_vector
+        region_values_vector = np.zeros(self.ncenters)
+        for k in range(self.ncenters):
+            active_indices = np.where(indices_vector==k)
+            if active_indices[0].size > 0:
+                region_values_vector[k] = np.sum(distortions_vector[active_indices])/N_samples
+        #Finally we return the numerically computed gradient.
+        return ((-1)*region_values_vector +1/self.ncenters)#Compute the gradient vector
+
+    def plot_WVD(self, namestring, num_points = 500):        
+        plt.figure(dpi=150)
+        ax = plt.gca() #you first need to get the axis handle
+        ax.set_aspect(1.0)
+        M = num_points
+        #We will use an MxM grid of points
+        xvalues = np.linspace(0,1,num=M);
+        yvalues = np.linspace(0,1,num=M);        
+        xx, yy = np.meshgrid(xvalues, yvalues)
+        g = lambda a,b: self.index_weighted_cell_of(np.array([a,b]))
+        Vg = np.vectorize(g)#Vectorization to be able to apply it to a numpy meshgrid
+        z = Vg(xx,yy)
+        plt.pcolormesh(xvalues, yvalues, z, cmap="RdYlBu_r")
+        #Next we plot the centers in black
+        Xs = [self.centers[k][0] for k in range(self.ncenters)]
+        Ys = [self.centers[k][1] for k in range(self.ncenters)]
+        plt.scatter(Xs, Ys, c="black", alpha=0.9) 
+        #Finally we save the image and show it to screen
+        plt.savefig(namestring)
+        plt.show()
 
 class Optimal_Transport_Finder:
     """ This function finds an optimal transport between 
@@ -170,13 +235,14 @@ class Optimal_Transport_Finder:
             if keep_track_of_best:
                 objective = self.compute_objective()
                 grad_norm = np.linalg.norm(gradient)
-                print("Step "+str(k)+":\n")
+                print("Optimal transport descent computation step "+str(k)+":\n")
                 self.print_current_status(objective, grad_norm)
                 if objective > self.best_objective_so_far:
+                #if grad_norm < self.best_gradient_norm:# we are looking for points with Voronoi regions of constant uniform area
                     self.best_objective_so_far = objective
                     self.best_weights_so_far = new_weights
                     self.best_gradient_norm = np.linalg.norm(gradient)
-                    
+                
         
         #if we keep track of the best then we should set it as the chosen weights
         if keep_track_of_best:
@@ -198,16 +264,25 @@ def dist(x,y):
     assert(len(x)==len(y))
     return np.linalg.norm(x-y)    
 
-def sample_q(numSamples):
+def two_d_uniform_sample_q(numSamples):
     #prototype of a sampling function. This is how measures are specified.
     """returns a collection of numSamples many independent vectors unif distributed in [-1,1] x [-1,1]"""
     ResultsArray = []
-    Xs = np.random.uniform(-1,1,numSamples)
-    Ys = np.random.uniform(-1,1,numSamples)
+    Xs = np.random.uniform(0,1,numSamples)
+    Ys = np.random.uniform(0,1,numSamples)
     for k in range(numSamples):
         ResultsArray.append([Xs[k],Ys[k]])
     return ResultsArray
 
+def two_d_uniform_density(vector):
+    #prototype of a density function. This is how measures are specified.
+    """returns the density of an independent 2d vector unif distributed in [-1,1] x [-1,1]"""
+    x = vector[0]
+    y = vector[1]
+    if (0<=x) and (x<=1) and (0<=y) and (y<=1):
+        return 1.0
+    else:
+        return 0.0
 
 if __name__ == "__main__":
     #0.Weighted Voronoi diagrams:
@@ -215,11 +290,12 @@ if __name__ == "__main__":
     centers_array = [np.random.uniform(-1,1,2) for k in range(N)] #Chosen uniformly in the square [-1,1]x[-1,1]
     empirical_measure = Empirical_Measure(centers_array)
     #The probability measure is specified by its sampling function
-    probability_measure = Probability_Measure(sample_q)
+    probability_measure = Probability_Measure(two_d_uniform_sample_q,two_d_uniform_density)
     #We construct the optimal transport object which carries out the gradient descent
     OT = Optimal_Transport_Finder(empirical_measure,probability_measure,dist,num_MC=100000)
-    OT.do_gradient_descent(NumSteps=30, StepSize=0.5, keep_track_of_best=True, Descending_in_size=True)    
-    WVD = OT.WVD #This is the resulting Weighted Voronoi Diagram, which encodes the optimal transport
-    print(WVD.centers)
-    print(WVD.weights)
+    OT.do_gradient_descent(NumSteps=30, StepSize=0.5, keep_track_of_best=True, Descending_in_size=True)        
+    WVD = OT.WVD #This is the resulting Weighted Voronoi Diagram, which contains an encoding of the optimal transport
+    print("Centers: " +str(WVD.centers))
+    print("Weights: " +str(OT.best_weights_so_far))
+    print("Distance: " +str(OT.best_objective_so_far))
     
